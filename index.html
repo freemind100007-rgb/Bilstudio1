@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bilstudio">
+<meta name="theme-color" content="#101211">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
+<title>Bilstudio</title>
+<style>
+  :root { --bg:#101211; --card:#1a1d1b; --line:#2a2f2c; --green:#5db878; --text:#f2f4f3; --mute:#9aa39e; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system, system-ui, "Segoe UI", sans-serif; }
+  body { padding: env(safe-area-inset-top) 16px calc(env(safe-area-inset-bottom) + 24px); max-width: 640px; margin: 0 auto; }
+  header { padding: 18px 0 8px; }
+  header img { width: 78%; max-width: 330px; display:block; border-radius: 10px; }
+  h1 { font-size: 22px; margin: 18px 0 4px; }
+  p.sub { margin: 0 0 18px; color: var(--mute); font-size: 15px; line-height: 1.4; }
+  .btn { display:flex; align-items:center; justify-content:center; width:100%; padding: 16px; border:0; border-radius: 14px;
+         font-size: 17px; font-weight: 600; color:#0b130e; background: var(--green); }
+  .btn:active { opacity:.85; }
+  .btn.sec { background: var(--card); color: var(--text); border:1px solid var(--line); }
+  .btn[disabled] { opacity:.45; }
+  .row { display:flex; gap:10px; margin-top:10px; }
+  .row .btn { flex:1; }
+  .opts { margin-top: 16px; background: var(--card); border:1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .opts label { display:block; font-size: 14px; color: var(--mute); margin-bottom: 6px; }
+  .opts select, .opts input[type=range] { width:100%; }
+  .opts select { background:#111413; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px; font-size:16px; }
+  .opts .grp + .grp { margin-top: 14px; }
+  .status { margin-top: 16px; padding: 12px 14px; background: var(--card); border:1px solid var(--line); border-radius: 12px; font-size: 15px; line-height:1.4; display:none; }
+  .bar { height: 6px; background:#0c0e0d; border-radius:4px; margin-top:10px; overflow:hidden; }
+  .bar > i { display:block; height:100%; width:0%; background: var(--green); transition: width .2s; }
+  .err { color:#ff9c8f; border-color:#5a2c27; }
+  #results { margin-top: 20px; display:grid; gap: 14px; }
+  .card { background: var(--card); border:1px solid var(--line); border-radius: 14px; overflow:hidden; }
+  .card img.res { width:100%; display:block; }
+  .card .bar2 { display:flex; gap:8px; padding:10px; }
+  .card .bar2 .btn { padding: 12px; font-size: 15px; }
+  .hint { color: var(--mute); font-size: 13px; margin-top: 18px; line-height: 1.45; }
+  input[type=file] { display:none; }
+</style>
+</head>
+<body>
+<header><img src="logo.png" alt="Göteborgs Fordonsmäklare"></header>
+
+<h1>Bilstudio <small style="font-size:12px;color:var(--mute);font-weight:400">v7 Hedin</small></h1>
+<p class="sub">Välj bilder från kamerarullen. Bakgrunden byts mot ljus studio med skugga och din logga. Allt sker i telefonen.</p>
+
+<button class="btn" id="pick">Välj bilder</button>
+<input type="file" id="file" accept="image/*" multiple>
+
+<div class="opts">
+  <div class="grp">
+    <label for="size">Bilens storlek: <span id="sizeVal">88</span>%</label>
+    <input type="range" id="size" min="70" max="96" value="88">
+  </div>
+  <div class="grp">
+    <label for="model">Kvalitet</label>
+    <select id="model">
+      <option value="isnet_fp16">Bäst (ca 90 MB första gången)</option>
+      <option value="isnet_quint8">Snabb (mindre, lite sämre kanter)</option>
+    </select>
+  </div>
+  <div class="grp">
+    <label for="clean">Rensa bort rester från gamla bakgrunden</label>
+    <select id="clean"><option value="1">På (rekommenderas)</option><option value="0">Av</option></select>
+  </div>
+  <div class="grp">
+    <label for="style">Bakgrund</label>
+    <select id="style"><option value="hedin">Hedin (mörkt golv)</option><option value="tiles">Plattgolv (ljust)</option></select>
+  </div>
+  <div class="grp">
+    <label for="logoOn">Logga i hörnet</label>
+    <select id="logoOn"><option value="1">På</option><option value="0">Av</option></select>
+  </div>
+</div>
+
+<div class="status" id="status"><div id="statusText"></div><div class="bar"><i id="barFill"></i></div></div>
+
+<div id="results"></div>
+<div class="row" id="saveRow" style="display:none">
+  <button class="btn" id="saveAll">Spara alla till Bilder</button>
+</div>
+
+<p class="hint">Första gången laddas AI-modellen ner, sedan går det snabbare. Håll appen öppen medan bilderna bearbetas. Tryck "Spara alla till Bilder" och välj "Spara bilder" i menyn som dyker upp.</p>
+
+<script type="module">
+const W = 1600, H = 1200;
+const $ = (id) => document.getElementById(id);
+const statusBox = $('status'), statusText = $('statusText'), barFill = $('barFill');
+let results = []; // { file: File, url: string }
+let busy = false;
+
+// ---------- Service worker (cache för snabbare start) ----------
+if ('serviceWorker' in navigator) {
+  const had = !!navigator.serviceWorker.controller; let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !reloaded && !busy) { reloaded = true; location.reload(); } });
+  navigator.serviceWorker.register('sw.js').then((r) => r.update()).catch(() => {});
+}
+
+// ---------- UI ----------
+$('size').addEventListener('input', () => $('sizeVal').textContent = $('size').value);
+$('pick').addEventListener('click', () => { if (!busy) $('file').click(); });
+$('file').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (files.length) await run(files);
+});
+$('saveAll').addEventListener('click', () => shareFiles(results.map(r => r.file)));
+
+function setStatus(text, pct, isErr = false) {
+  statusBox.style.display = 'block';
+  statusBox.classList.toggle('err', isErr);
+  statusText.textContent = text;
+  if (pct != null) barFill.style.width = Math.round(pct * 100) + '%';
+}
+
+async function shareFiles(files) {
+  try {
+    if (navigator.canShare && navigator.canShare({ files })) {
+      await navigator.share({ files });
+    } else {
+      for (const f of files) {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(f); a.download = f.name; a.click();
+      }
+    }
+  } catch (e) { if (e.name !== 'AbortError') setStatus('Kunde inte spara: ' + e.message, null, true); }
+}
+
+// ---------- Ladda bakgrundsborttagning ----------
+let libPromise = null;
+function loadLib() {
+  if (libPromise) return libPromise;
+  const urls = [
+    'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.5/+esm',
+    'https://esm.sh/@imgly/background-removal@1.5.5',
+    'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.5/+esm',
+  ];
+  libPromise = (async () => {
+    let last;
+    for (const u of urls) { try { return await import(u); } catch (e) { last = e; } }
+    throw new Error('Kunde inte ladda AI-biblioteket (kolla internet). ' + (last?.message || ''));
+  })();
+  libPromise.catch(() => { libPromise = null; });
+  return libPromise;
+}
+
+// ---------- Hjälpfunktioner för canvas ----------
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+const toBlob = (c, type, q) => new Promise((res) => c.toBlob(res, type, q));
+
+async function loadImage(src) {
+  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+}
+async function blobToImg(blob) {
+  const u = URL.createObjectURL(blob);
+  try { return await loadImage(u); } finally { URL.revokeObjectURL(u); }
+}
+
+async function downscaleToBlob(file, maxSide = 1700) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const s = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+  const c = mk(Math.round(bmp.width * s), Math.round(bmp.height * s));
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close?.();
+  return toBlob(c, 'image/jpeg', 0.95);
+}
+
+function alphaBBox(img) {
+  // Hitta bilens ytterkanter på en liten kopia
+  const sc = Math.min(1, 500 / Math.max(img.width, img.height));
+  const c = mk(Math.max(1, Math.round(img.width * sc)), Math.max(1, Math.round(img.height * sc)));
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(img, 0, 0, c.width, c.height);
+  const d = x.getImageData(0, 0, c.width, c.height).data;
+  let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+  for (let y = 0; y < c.height; y++) for (let xx = 0; xx < c.width; xx++) {
+    if (d[(y * c.width + xx) * 4 + 3] > 60) {
+      if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+  }
+  if (x1 < 0) return null;
+  const k = 1 / sc;
+  return { x: Math.floor(x0 * k), y: Math.floor(y0 * k), w: Math.ceil((x1 - x0 + 1) * k), h: Math.ceil((y1 - y0 + 1) * k) };
+}
+
+// ---------- Rensa rester efter bakgrundsborttagningen ----------
+function dilate(src, w, h, r) {
+  if (r <= 0) return src;
+  const tmp = new Uint8Array(w * h), out = new Uint8Array(w * h);
+  const P = new Int32Array(Math.max(w, h) + 1);
+  for (let y = 0; y < h; y++) {
+    P[0] = 0; for (let x = 0; x < w; x++) P[x + 1] = P[x] + src[y * w + x];
+    for (let x = 0; x < w; x++) tmp[y * w + x] = (P[Math.min(w, x + r + 1)] - P[Math.max(0, x - r)]) > 0 ? 1 : 0;
+  }
+  for (let x = 0; x < w; x++) {
+    P[0] = 0; for (let y = 0; y < h; y++) P[y + 1] = P[y] + tmp[y * w + x];
+    for (let y = 0; y < h; y++) out[y * w + x] = (P[Math.min(h, y + r + 1)] - P[Math.max(0, y - r)]) > 0 ? 1 : 0;
+  }
+  return out;
+}
+
+/**
+ * 1) Behåller bara själva bilen (största sammanhängande delen) - tar bort svävande rester.
+ * 2) Tar bort svaga, halvgenomskinliga spöken (t.ex. skyltar bakom bilen).
+ * 3) Fyller igen hål inuti bilen (fönster) med originalbildens pixlar.
+ */
+function cleanCut(cut, orig) {
+  const w = cut.width, h = cut.height;
+  const cx = mk(w, h).getContext('2d', { willReadFrequently: true });
+  cx.drawImage(cut, 0, 0, w, h);
+  const A = cx.getImageData(0, 0, w, h);
+  const ox = mk(w, h).getContext('2d', { willReadFrequently: true });
+  ox.drawImage(orig, 0, 0, w, h);
+  const O = ox.getImageData(0, 0, w, h);
+
+  // Liten mask för snabb analys
+  const sc = Math.min(1, 480 / Math.max(w, h));
+  const sw = Math.max(1, Math.round(w * sc)), sh = Math.max(1, Math.round(h * sc)), N = sw * sh;
+  const sCanvas = mk(sw, sh), sctx = sCanvas.getContext('2d', { willReadFrequently: true });
+  sctx.imageSmoothingQuality = 'high';
+  sctx.drawImage(cx.canvas, 0, 0, sw, sh);
+  const sd = sctx.getImageData(0, 0, sw, sh).data;
+  const bin = new Uint8Array(N);
+  for (let i = 0; i < N; i++) bin[i] = sd[i * 4 + 3] > 140 ? 1 : 0;
+
+  // Sammanhängande delar (efter lätt utvidgning så små glapp överbryggas)
+  const dil = dilate(bin, sw, sh, 2);
+  const lab = new Int32Array(N), areas = [0], stack = new Int32Array(N);
+  let n = 0;
+  for (let s = 0; s < N; s++) {
+    if (!dil[s] || lab[s]) continue;
+    n++; let sp = 0, a = 0; stack[sp++] = s; lab[s] = n;
+    while (sp) {
+      const p = stack[--sp]; a++;
+      const x = p % sw, y = (p / sw) | 0;
+      if (x > 0 && dil[p - 1] && !lab[p - 1]) { lab[p - 1] = n; stack[sp++] = p - 1; }
+      if (x < sw - 1 && dil[p + 1] && !lab[p + 1]) { lab[p + 1] = n; stack[sp++] = p + 1; }
+      if (y > 0 && dil[p - sw] && !lab[p - sw]) { lab[p - sw] = n; stack[sp++] = p - sw; }
+      if (y < sh - 1 && dil[p + sw] && !lab[p + sw]) { lab[p + sw] = n; stack[sp++] = p + sw; }
+    }
+    areas[n] = a;
+  }
+  let maxA = 0; for (let l = 1; l <= n; l++) if (areas[l] > maxA) maxA = areas[l];
+  const K = new Uint8Array(N);
+  for (let i = 0; i < N; i++) if (lab[i] && areas[lab[i]] >= maxA * 0.15) K[i] = 1;
+
+  // Ta bort golv/reflektion som hänger under bilen: ljusa eller varmgrå ytor (inte blå, inte svarta)
+  // som hänger ihop med underkanten. Tas bara bort om ytan är stor och sitter längst ner.
+  {
+    const oc = mk(sw, sh), octx = oc.getContext('2d', { willReadFrequently: true });
+    octx.drawImage(ox.canvas, 0, 0, sw, sh);
+    const od = octx.getImageData(0, 0, sw, sh).data;
+    const flo = new Uint8Array(N);
+    let ky0 = sh, ky1 = -1, kArea = 0;
+    for (let i = 0; i < N; i++) {
+      if (!K[i]) continue;
+      kArea++;
+      const y = (i / sw) | 0; if (y < ky0) ky0 = y; if (y > ky1) ky1 = y;
+      const r = od[i * 4], g = od[i * 4 + 1], b = od[i * 4 + 2], mxc = Math.max(r, g, b), mnc = Math.min(r, g, b);
+      const lum = 0.3 * r + 0.59 * g + 0.11 * b, sat = (mxc - mnc) / (mxc || 1);
+      flo[i] = ((lum > 135 && sat < 0.22) || (lum > 62 && b <= r + 10 && sat < 0.45)) ? 1 : 0;
+    }
+    // Ljus/silver bil: mycket av bilen ser ut som golv -> ta inte bort något
+    let floN = 0; for (let i = 0; i < N; i++) floN += flo[i];
+    const bandTop = ky0 + (ky1 - ky0) * 0.65, skip = floN > kArea * 0.30;
+    for (let i = 0; i < N; i++) if (flo[i] && (skip || ((i / sw) | 0) < bandTop)) flo[i] = 0;
+    const seen = new Uint8Array(N), lst = new Int32Array(N), rm = [];
+    for (let s0 = 0; s0 < N; s0++) {
+      if (!flo[s0] || seen[s0] || !(s0 + sw >= N || !K[s0 + sw])) continue;
+      let sq = 0, L = 0, top = sh, bot = 0; seen[s0] = 1; stack[sq++] = s0;
+      while (sq) {
+        const p = stack[--sq]; lst[L++] = p;
+        const x = p % sw, y = (p / sw) | 0; if (y < top) top = y; if (y > bot) bot = y;
+        if (x > 0 && flo[p - 1] && !seen[p - 1]) { seen[p - 1] = 1; stack[sq++] = p - 1; }
+        if (x < sw - 1 && flo[p + 1] && !seen[p + 1]) { seen[p + 1] = 1; stack[sq++] = p + 1; }
+        if (y > 0 && flo[p - sw] && !seen[p - sw]) { seen[p - sw] = 1; stack[sq++] = p - sw; }
+        if (y < sh - 1 && flo[p + sw] && !seen[p + sw]) { seen[p + sw] = 1; stack[sq++] = p + sw; }
+      }
+      if (L >= kArea * 0.004 && ky1 > ky0) for (let j = 0; j < L; j++) rm.push(lst[j]);
+    }
+    for (const p of rm) K[p] = 0;
+  }
+
+  // Fyll hål: allt som inte kan nås utifrån
+  const outside = new Uint8Array(N);
+  let sp = 0;
+  const seed = (p) => { if (!K[p] && !outside[p]) { outside[p] = 1; stack[sp++] = p; } };
+  for (let x = 0; x < sw; x++) { seed(x); seed((sh - 1) * sw + x); }
+  for (let y = 0; y < sh; y++) { seed(y * sw); seed(y * sw + sw - 1); }
+  while (sp) {
+    const p = stack[--sp], x = p % sw, y = (p / sw) | 0;
+    if (x > 0) seed(p - 1); if (x < sw - 1) seed(p + 1);
+    if (y > 0) seed(p - sw); if (y < sh - 1) seed(p + sw);
+  }
+  const F = new Uint8Array(N);
+  for (let i = 0; i < N; i++) F[i] = outside[i] ? 0 : 1;
+
+  const up = (arr) => {
+    const c = mk(sw, sh), x = c.getContext('2d');
+    const id = x.createImageData(sw, sh);
+    for (let i = 0; i < N; i++) id.data[i * 4 + 3] = arr[i] ? 255 : 0;
+    x.putImageData(id, 0, 0);
+    const c2 = mk(w, h), x2 = c2.getContext('2d', { willReadFrequently: true });
+    x2.imageSmoothingEnabled = true; x2.imageSmoothingQuality = 'high';
+    x2.drawImage(c, 0, 0, w, h);
+    return x2.getImageData(0, 0, w, h).data;
+  };
+  const Kd = up(K), Fd = up(F), a = A.data, o = O.data;
+
+  for (let i = 0, M = w * h; i < M; i++) {
+    const p = i * 4;
+    const k = Kd[p + 3] / 255, f = Fd[p + 3] / 255;
+    let ca = (a[p + 3] / 255 - 0.18) / 0.62;
+    ca = ca < 0 ? 0 : ca > 1 ? 1 : ca;
+    ca *= k;
+    const ha = f > k ? f - k : 0;
+    o[p + 3] = Math.round((ca + ha * (1 - ca)) * 255); // färgerna är originalbildens
+  }
+  const res = mk(w, h);
+  res.getContext('2d').putImageData(O, 0, 0);
+  return res;
+}
+
+// ---------- Studiobakgrund ----------
+let STYLE = 'hedin';
+// Hedin: nästan vit vägg, mörkt kolgrått golv, mjuk horisont, inga plattlinjer
+function drawHedin(ctx, w, h) {
+  const hy = Math.round(h * 0.55), fh = h - hy;
+  let g = ctx.createLinearGradient(0, 0, 0, hy);
+  g.addColorStop(0, '#e6e8eb'); g.addColorStop(0.6, '#f6f7f8'); g.addColorStop(1, '#eceef0');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, hy);
+  g = ctx.createLinearGradient(0, 0, w, 0);
+  g.addColorStop(0, 'rgba(140,146,155,0.26)'); g.addColorStop(0.32, 'rgba(140,146,155,0)');
+  g.addColorStop(0.68, 'rgba(140,146,155,0)'); g.addColorStop(1, 'rgba(140,146,155,0.26)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, hy);
+  ctx.save(); ctx.translate(w / 2, hy * 0.78); ctx.scale(1, 0.6);
+  let r = ctx.createRadialGradient(0, 0, 0, 0, 0, w * 0.6);
+  r.addColorStop(0, 'rgba(255,255,255,0.55)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = r; ctx.fillRect(-w, -w, w * 2, w * 2); ctx.restore();
+
+  g = ctx.createLinearGradient(0, hy, 0, h);
+  g.addColorStop(0, '#8d8f93'); g.addColorStop(0.18, '#707276'); g.addColorStop(0.6, '#595a5e'); g.addColorStop(1, '#404145');
+  ctx.fillStyle = g; ctx.fillRect(0, hy, w, fh);
+  ctx.save(); ctx.beginPath(); ctx.rect(0, hy, w, fh); ctx.clip();
+  ctx.translate(w / 2, hy + fh * 0.42); ctx.scale(1, 0.42);
+  r = ctx.createRadialGradient(0, 0, 0, 0, 0, w * 0.62);
+  r.addColorStop(0, 'rgba(255,255,255,0.20)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = r; ctx.fillRect(-w, -w, w * 2, w * 2); ctx.restore();
+  g = ctx.createLinearGradient(0, 0, w, 0);
+  g.addColorStop(0, 'rgba(10,11,14,0.38)'); g.addColorStop(0.26, 'rgba(10,11,14,0)');
+  g.addColorStop(0.74, 'rgba(10,11,14,0)'); g.addColorStop(1, 'rgba(10,11,14,0.38)');
+  ctx.fillStyle = g; ctx.fillRect(0, hy, w, fh);
+  // mjuk horisont: golvet speglar väggen en aning
+  g = ctx.createLinearGradient(0, hy - h * 0.03, 0, hy + h * 0.07);
+  g.addColorStop(0, 'rgba(236,238,240,0)'); g.addColorStop(0.3, 'rgba(190,192,196,0.55)'); g.addColorStop(1, 'rgba(120,122,126,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, hy - h * 0.03, w, h * 0.10);
+}
+
+const HORIZON = 0.58;
+function drawStudio(ctx, w, h) {
+  if (STYLE === 'hedin') return drawHedin(ctx, w, h);
+  const hy = Math.round(h * HORIZON), fh = h - hy;
+
+  // Vägg: nästan vit, lite gråare högst upp
+  let g = ctx.createLinearGradient(0, 0, 0, hy);
+  g.addColorStop(0, '#dde1e5'); g.addColorStop(1, '#f4f5f7');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, hy);
+  g = ctx.createLinearGradient(0, 0, w, 0);
+  g.addColorStop(0, 'rgba(120,128,138,0.14)'); g.addColorStop(0.3, 'rgba(120,128,138,0)');
+  g.addColorStop(0.7, 'rgba(120,128,138,0)'); g.addColorStop(1, 'rgba(120,128,138,0.14)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, hy);
+
+  // Lampglöd på väggen bakom bilen
+  ctx.save(); ctx.translate(w / 2, hy * 0.80); ctx.scale(1, 0.62);
+  const wl = ctx.createRadialGradient(0, 0, 0, 0, 0, w * 0.62);
+  wl.addColorStop(0, 'rgba(255,255,255,0.50)'); wl.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = wl; ctx.fillRect(-w, -w, w * 2, w * 2); ctx.restore();
+
+  // Golv: tydligt mörkare än väggen
+  g = ctx.createLinearGradient(0, hy, 0, h);
+  g.addColorStop(0, '#abaeb3'); g.addColorStop(0.35, '#92959a'); g.addColorStop(1, '#6c6f74');
+  ctx.fillStyle = g; ctx.fillRect(0, hy, w, fh);
+
+  // Plattor i perspektiv (ritas separat och tonas ut mot horisonten)
+  const t = mk(w, fh), tx = t.getContext('2d');
+  const vx = w / 2, tw = w * 0.21, Z0 = 1, dz = 0.42;
+  tx.lineCap = 'butt';
+  // varje platta får lite olika ton
+  for (let k = 0; k < 40; k++) {
+    const ya = fh * Z0 / (Z0 + (k + 1) * dz), yb = fh * Z0 / (Z0 + k * dz);
+    for (let j = -14; j < 14; j++) {
+      const hs = (((j + 20) * 73856093) ^ ((k + 3) * 19349663)) >>> 0, r = (hs % 1000) / 1000;
+      const xa0 = vx + (j + 0.5) * tw * ya / fh, xa1 = vx + (j + 1.5) * tw * ya / fh;
+      const xb0 = vx + (j + 0.5) * tw * yb / fh, xb1 = vx + (j + 1.5) * tw * yb / fh;
+      tx.fillStyle = r < 0.5 ? `rgba(0,0,0,${(0.5 - r) * 0.16})` : `rgba(255,255,255,${(r - 0.5) * 0.14})`;
+      tx.beginPath(); tx.moveTo(xa0, ya); tx.lineTo(xa1, ya); tx.lineTo(xb1, yb); tx.lineTo(xb0, yb); tx.closePath(); tx.fill();
+    }
+  }
+  // tvärlinjer
+  for (let k = 0; k < 40; k++) {
+    const Z = Z0 + k * dz, y = fh * Z0 / Z, lw = 1 + 2.6 * (Z0 / Z);
+    tx.fillStyle = 'rgba(0,0,0,0.16)'; tx.fillRect(0, y + lw * 0.6, w, lw);
+    tx.fillStyle = 'rgba(255,255,255,0.30)'; tx.fillRect(0, y - lw * 0.5, w, lw);
+  }
+  // längslinjer mot fluktpunkten
+  for (let j = -14; j <= 14; j++) {
+    const xb = vx + (j + 0.5) * tw;
+    tx.strokeStyle = 'rgba(0,0,0,0.14)'; tx.lineWidth = 4;
+    tx.beginPath(); tx.moveTo(vx, 0); tx.lineTo(xb + 2, fh); tx.stroke();
+    tx.strokeStyle = 'rgba(255,255,255,0.28)'; tx.lineWidth = 2.6;
+    tx.beginPath(); tx.moveTo(vx, 0); tx.lineTo(xb, fh); tx.stroke();
+  }
+  tx.globalCompositeOperation = 'destination-in';
+  const fade = tx.createLinearGradient(0, 0, 0, fh);
+  fade.addColorStop(0, 'rgba(0,0,0,0.15)'); fade.addColorStop(0.35, 'rgba(0,0,0,0.75)'); fade.addColorStop(1, 'rgba(0,0,0,1)');
+  tx.fillStyle = fade; tx.fillRect(0, 0, w, fh);
+  ctx.drawImage(t, 0, hy);
+
+  // Ljuspool på golvet under bilen
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, hy, w, fh); ctx.clip();
+  ctx.translate(w / 2, hy + fh * 0.50); ctx.scale(1, 0.50);
+  const r = ctx.createRadialGradient(0, 0, 0, 0, 0, w * 0.66);
+  r.addColorStop(0, 'rgba(255,255,255,0.30)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = r; ctx.fillRect(-w, -w, w * 2, w * 2);
+  ctx.restore();
+
+  // Golvets sidovinjett
+  g = ctx.createLinearGradient(0, 0, w, 0);
+  g.addColorStop(0, 'rgba(30,34,40,0.32)'); g.addColorStop(0.25, 'rgba(30,34,40,0)');
+  g.addColorStop(0.75, 'rgba(30,34,40,0)'); g.addColorStop(1, 'rgba(30,34,40,0.32)');
+  ctx.fillStyle = g; ctx.fillRect(0, hy, w, fh);
+
+  // Golvlist: här möter väggen golvet
+  const bh = Math.round(h * 0.02);
+  g = ctx.createLinearGradient(0, hy - bh, 0, hy);
+  g.addColorStop(0, '#e6e8eb'); g.addColorStop(1, '#c2c6cb');
+  ctx.fillStyle = g; ctx.fillRect(0, hy - bh, w, bh);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fillRect(0, hy - bh, w, 2);
+  g = ctx.createLinearGradient(0, hy, 0, hy + h * 0.03);
+  g.addColorStop(0, 'rgba(20,22,26,0.45)'); g.addColorStop(1, 'rgba(20,22,26,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, hy, w, h * 0.03);
+}
+
+// ---------- Skuggor som följer bilens underkant ----------
+function blurAlphaCanvas(c, rx, ry, passes = 3) {
+  const w = c.width, h = c.height, x = c.getContext('2d', { willReadFrequently: true });
+  const id = x.getImageData(0, 0, w, h), d = id.data;
+  let a = new Float32Array(w * h), t = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) a[i] = d[i * 4 + 3];
+  const cl = (v, m) => v < 0 ? 0 : v > m ? m : v;
+  for (let p = 0; p < passes; p++) {
+    if (rx > 0) for (let y = 0; y < h; y++) {
+      const row = y * w; let sum = 0;
+      for (let xx = -rx; xx <= rx; xx++) sum += a[row + cl(xx, w - 1)];
+      for (let xx = 0; xx < w; xx++) {
+        t[row + xx] = sum / (2 * rx + 1);
+        sum += a[row + cl(xx + rx + 1, w - 1)] - a[row + cl(xx - rx, w - 1)];
+      }
+    } else t.set(a);
+    if (ry > 0) for (let xx = 0; xx < w; xx++) {
+      let sum = 0;
+      for (let y = -ry; y <= ry; y++) sum += t[cl(y, h - 1) * w + xx];
+      for (let y = 0; y < h; y++) {
+        a[y * w + xx] = sum / (2 * ry + 1);
+        sum += t[cl(y + ry + 1, h - 1) * w + xx] - t[cl(y - ry, h - 1) * w + xx];
+      }
+    } else a.set(t);
+  }
+  for (let i = 0; i < w * h; i++) { d[i * 4] = 8; d[i * 4 + 1] = 10; d[i * 4 + 2] = 14; d[i * 4 + 3] = a[i]; }
+  x.putImageData(id, 0, 0);
+}
+
+// by = lägsta punkt i varje kolumn (däckens/karossens underkant)
+// fl = golvlinjen: en rät linje genom hjulens underkant (lutar när bilen står snett)
+// Kolumner som inte ligger nära golvet (backspeglar, spoiler, tak) får by = -1 och skuggas inte.
+function carFootprint(car, k) {
+  const sw = Math.max(1, Math.round(car.width * k)), sh = Math.max(1, Math.round(car.height * k));
+  const c = mk(sw, sh), x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(car, 0, 0, sw, sh);
+  const d = x.getImageData(0, 0, sw, sh).data;
+  const raw = new Float32Array(sw).fill(-1);
+  for (let xx = 0; xx < sw; xx++) for (let y = sh - 1; y >= 0; y--) if (d[(y * sw + xx) * 4 + 3] > 128) { raw[xx] = y; break; }
+  const sm = new Float32Array(sw);
+  for (let xx = 0; xx < sw; xx++) {
+    let s = 0, n = 0;
+    for (let j = -2; j <= 2; j++) { const v = raw[Math.min(sw - 1, Math.max(0, xx + j))]; if (v >= 0) { s += v; n++; } }
+    sm[xx] = raw[xx] >= 0 && n ? s / n : -1;
+  }
+  const tol = Math.max(2, sh * 0.03), Wn = Math.max(2, Math.round(sw * 0.03));
+  // lokala toppar (lägsta punkter), minst 6% isär
+  const cand = [];
+  for (let i = 0; i < sw; i++) {
+    if (sm[i] < 0) continue;
+    let top = true;
+    for (let j = -Wn; j <= Wn; j++) { const v = sm[Math.min(sw - 1, Math.max(0, i + j))]; if (v > sm[i]) { top = false; break; } }
+    if (top) cand.push(i);
+  }
+  cand.sort((p, q) => sm[q] - sm[p]);
+  const peaks = [];
+  for (const i of cand) { if (peaks.every((p) => Math.abs(p - i) > sw * 0.06)) peaks.push(i); if (peaks.length >= 8) break; }
+  // bästa stödlinje: inga delar av bilen får hänga under den
+  let best = null;
+  for (let p = 0; p < peaks.length; p++) for (let q = p + 1; q < peaks.length; q++) {
+    let a = peaks[p], b = peaks[q]; if (a > b) { const t = a; a = b; b = t; }
+    if (b - a < sw * 0.25) continue;
+    const slope = (sm[b] - sm[a]) / (b - a);
+    if (Math.abs(slope) > 0.55) continue;
+    let viol = 0, nBad = 0, nValid = 0;
+    for (let i = 0; i < sw; i++) {
+      if (sm[i] < 0) continue; nValid++;
+      const dd = sm[i] - (sm[a] + slope * (i - a));
+      if (dd > tol) nBad++; if (dd > viol) viol = dd;
+    }
+    if (nBad > nValid * 0.10 || viol > sh * 0.12) continue;
+    const score = (b - a) - nBad * 3 - viol;
+    if (!best || score > best.score) best = { a, slope, score };
+  }
+  let line;
+  if (best) line = (i) => sm[best.a] + best.slope * (i - best.a);
+  else { let mx = 0; for (let i = 0; i < sw; i++) if (sm[i] > mx) mx = sm[i]; line = () => mx; }
+  const by = new Float32Array(sw).fill(-1), fl = new Float32Array(sw).fill(-1);
+  for (let i = 0; i < sw; i++) {
+    if (sm[i] < 0) continue;
+    const L = line(i), g = L - sm[i];
+    if (g >= -tol && g <= sh * 0.22) { by[i] = sm[i]; fl[i] = Math.max(L, sm[i]); }
+  }
+  return { sw, sh, by, fl };
+}
+
+function shadowLayer(W, H, k, fp, ox, oy, span, rx, ry) {
+  const c = mk(Math.round(W * k), Math.round(H * k)), x = c.getContext('2d');
+  x.fillStyle = '#080a0e';
+  for (let i = 0; i < fp.sw; i++) {
+    const v = fp.by[i]; if (v < 0) continue;
+    const [a, b, wt] = span(v, fp.fl[i]);
+    if (b > a) { x.globalAlpha = wt === undefined ? 1 : wt; x.fillRect(ox + i, oy + a, 1, b - a); }
+  }
+  blurAlphaCanvas(c, rx, ry, 3);
+  return c;
+}
+
+async function compose(cutBlob, origBlob, carFrac, withLogo, logoImg, clean) {
+  const cut = await blobToImg(cutBlob);
+  let src = cut;
+  if (clean) src = cleanCut(cut, await blobToImg(origBlob));
+  const bb = alphaBBox(src);
+  if (!bb) throw new Error('Hittade ingen bil i bilden');
+
+  const scale = Math.min((W * carFrac) / bb.w, (H * 0.60) / bb.h);
+  const cw = Math.round(bb.w * scale), ch = Math.round(bb.h * scale);
+  const car = mk(cw, ch);
+  const cctx = car.getContext('2d');
+  cctx.imageSmoothingQuality = 'high';
+  cctx.drawImage(src, bb.x, bb.y, bb.w, bb.h, 0, 0, cw, ch);
+
+  const c = mk(W, H), ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  drawStudio(ctx, W, H);
+
+  const floorY = Math.round(H * 0.87);
+  const x0 = Math.round((W - cw) / 2), y0 = floorY - ch;
+
+  // Svag spegling i det blanka golvet
+  const refl = mk(cw, ch), rfx = refl.getContext('2d');
+  rfx.translate(0, ch); rfx.scale(1, -1); rfx.drawImage(car, 0, 0); rfx.setTransform(1, 0, 0, 1, 0, 0);
+  rfx.globalCompositeOperation = 'destination-in';
+  const fg = rfx.createLinearGradient(0, 0, 0, ch * 0.42);
+  fg.addColorStop(0, 'rgba(0,0,0,0.16)'); fg.addColorStop(1, 'rgba(0,0,0,0)');
+  rfx.fillStyle = fg; rfx.fillRect(0, 0, cw, ch);
+  ctx.drawImage(refl, x0, floorY);
+
+  // Skuggor
+  const k = 0.25, fp = carFootprint(car, k), chk = ch * k;
+  const ox = Math.round(x0 * k), oy = Math.round(y0 * k);
+  const layers = [
+    // bred, mjuk skugga runt hela bilen
+    [shadowLayer(W, H, k, fp, ox, oy, (v, f) => [f - chk * 0.04, f + chk * 0.07], 14, 5), 0.55],
+    // mörkt under karossen: från syllen ner till golvet (tonas ut där gapet är stort)
+    [shadowLayer(W, H, k, fp, ox, oy, (v, f) => {
+      const g = f - v, lo = chk * 0.07, hi = chk * 0.22;
+      const wt = g <= lo ? 1 : Math.max(0, 1 - (g - lo) / (hi - lo));
+      return [v - 2, f + chk * 0.02, wt];
+    }, 6, 2), 0.92],
+    // skarp kontakt där däcken möter golvet
+    [shadowLayer(W, H, k, fp, ox, oy, (v, f) => (f - v < chk * 0.05 ? [v - 3, v + 2.5] : [0, 0]), 2, 1), 1.0],
+  ];
+  for (const [layer, a] of layers) { ctx.globalAlpha = a; ctx.drawImage(layer, 0, 0, W, H); }
+  ctx.globalAlpha = 1;
+
+  // Bilen
+  ctx.drawImage(car, x0, y0);
+
+  // Logga (genomskinlig, direkt på väggen)
+  if (withLogo && logoImg) {
+    const lw = Math.round(W * 0.40), lh = Math.round(lw * logoImg.height / logoImg.width);
+    ctx.drawImage(logoImg, Math.round(W * 0.04), Math.round(H * 0.05), lw, lh);
+  }
+  return toBlob(c, 'image/jpeg', 0.93);
+}
+
+// ---------- Huvudflöde ----------
+async function run(files) {
+  busy = true; $('pick').disabled = true;
+  $('saveRow').style.display = 'none';
+  const resEl = $('results'); resEl.innerHTML = ''; results = [];
+  try {
+    setStatus('Laddar AI-biblioteket…', 0.02);
+    const lib = await loadLib();
+    const removeBackground = lib.removeBackground || lib.default?.removeBackground || lib.default;
+    const logoImg = await loadImage('logo-studio.png').catch(() => null);
+    const model = $('model').value, carFrac = Number($('size').value) / 100;
+    const withLogo = $('logoOn').value === '1', clean = $('clean').value === '1';
+    STYLE = $('style').value;
+
+    for (let i = 0; i < files.length; i++) {
+      const label = `Bild ${i + 1} av ${files.length}`;
+      setStatus(`${label}: förbereder…`, i / files.length);
+      const small = await downscaleToBlob(files[i]);
+      const cut = await removeBackground(small, {
+        model, output: { format: 'image/png', quality: 1 },
+        progress: (key, cur, total) => {
+          const isFetch = String(key).startsWith('fetch');
+          const part = total ? cur / total : 0;
+          setStatus(isFetch ? `${label}: laddar ner AI-modellen (bara första gången)… ${Math.round(part * 100)}%`
+                            : `${label}: tar bort bakgrund…`, (i + (isFetch ? part * 0.3 : 0.5)) / files.length);
+        }
+      });
+      setStatus(`${label}: rensar och lägger in studiobakgrund…`, (i + 0.85) / files.length);
+      const out = await compose(cut, small, carFrac, withLogo, logoImg, clean);
+      const name = `bil-${String(i + 1).padStart(2, '0')}.jpg`;
+      const file = new File([out], name, { type: 'image/jpeg' });
+      const url = URL.createObjectURL(file);
+      results.push({ file, url });
+      addCard(file, url);
+    }
+    setStatus(files.length > 1 ? `Klart! ${files.length} bilder är färdiga.` : 'Klart! Bilden är färdig.', 1);
+    $('saveRow').style.display = 'flex';
+  } catch (e) {
+    console.error(e);
+    setStatus('Något gick fel: ' + (e?.message || e), null, true);
+  } finally { busy = false; $('pick').disabled = false; }
+}
+
+function addCard(file, url) {
+  const d = document.createElement('div'); d.className = 'card';
+  const img = document.createElement('img'); img.className = 'res'; img.src = url; img.alt = file.name;
+  const bar = document.createElement('div'); bar.className = 'bar2';
+  const b = document.createElement('button'); b.className = 'btn sec'; b.textContent = 'Spara denna bild';
+  b.addEventListener('click', () => shareFiles([file]));
+  bar.appendChild(b); d.appendChild(img); d.appendChild(bar);
+  $('results').appendChild(d);
+}
+</script>
+</body>
+</html>
